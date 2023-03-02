@@ -8,9 +8,77 @@ namespace OssProducerWithKafkaApi
     {
         static async Task Main(string[] args)
         {
-            string topicName = "TransactionRssnOrAssd";
+            string topicName = "TransactionAssnOrRnnn";
 
-            Console.WriteLine("Demo for using Kafka APIs seamlessly with OSS");
+            using var adminClient = new AdminClientBuilder(
+                new AdminClientConfig
+                {
+                    BootstrapServers = "r226nvs35y6q.streaming.us-ashburn-1.oci.oraclecloud.com:9092",
+                    BrokerVersionFallback = "1.0.0",
+                    SecurityProtocol = SecurityProtocol.SaslSsl,
+                    SaslMechanism = SaslMechanism.Plain,
+                    SaslUsername = "toksopc/loyalty_streaming_user/ocid1.streampool.oc1.iad.amaaaaaafcruwjya4jdiykjqjog53t2gmouajdwvinlf2xf7r226nvs35y6q",
+                    SaslPassword = ">[JMQ6vg;iLzC1TeLM+-",
+                }).Build();
+
+            try
+            {
+                var of = new Offset().Value;
+
+                Console.WriteLine($"{of}");
+                Console.WriteLine($"Client Name {adminClient.Name}");
+
+                var list = await adminClient.ListConsumerGroupsAsync();
+
+                var p = new Partition();
+
+                var a = new ConsumerGroupTopicPartitions[]
+                {
+                    new ConsumerGroupTopicPartitions("loyalty-microservice", new List<TopicPartition>{ new TopicPartition(topicName, p) })
+                };
+
+                var listTwo = await adminClient.ListConsumerGroupOffsetsAsync(a);
+
+                foreach (var aTwo in listTwo)
+                {
+                    Console.WriteLine($"This is Capacity {aTwo.Partitions.Capacity}");
+                    Console.WriteLine($"This is a Group {aTwo.Group}");
+                    Console.WriteLine($"This is a Count {aTwo.Partitions.Count}");
+                }
+
+                foreach ( var group in list.Valid )
+                {
+                    Console.WriteLine($"Group List State {group.State}");
+                    Console.WriteLine($"Group List Id {group.GroupId}");
+                    Console.WriteLine($"Group List ConsumerGroups {group.IsSimpleConsumerGroup}");
+                }
+
+                /* await adminClient.DeleteTopicsAsync(new string[] { topicName });
+
+                 Console.WriteLine("Topico eliminado.");*/
+
+                /*await adminClient.CreateTopicsAsync(new TopicSpecification[] {
+                        new TopicSpecification { Name = topicName, ReplicationFactor = 1, NumPartitions = 1 } });*/
+
+                /*var parti = new Partition();
+                var topicP = new TopicPartition(topicName, parti);
+                var offset = new Offset(500);
+                var topicOffset = new List<TopicPartitionOffset>{
+                    new TopicPartitionOffset(topicP, offset)
+                };
+                await adminClient.DeleteRecordsAsync(topicOffset);*/
+            }
+            catch (CreateTopicsException e)
+            {
+                var error = new Exception($"An error occured creating topic {e.Results[0].Topic}: {e.Results[0].Error.Reason}");
+                Console.WriteLine($"Error to create topic: {error.Message}");
+                throw error;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"Error to create topic: {e.Message}");
+                throw;
+            }
 
             var config = new ProducerConfig
             {
@@ -22,51 +90,46 @@ namespace OssProducerWithKafkaApi
                 AllowAutoCreateTopics = true,
             };
 
-            await Consume(topicName, config);
+            // Produce(topicName, config); // use the name of the stream you created
         }
 
-        static async Task Consume(string topic, ClientConfig config)
+        static void Produce(string topic, ClientConfig config)
         {
-            var consumerConfig = new ConsumerConfig(config);
-            consumerConfig.GroupId = "loyalty-microservice";
-            consumerConfig.AutoOffsetReset = AutoOffsetReset.Earliest;
-            consumerConfig.EnableAutoCommit = true;
-
-            CancellationTokenSource cts = new CancellationTokenSource();
-            Console.CancelKeyPress += (_, e) => {
-                e.Cancel = true; // prevent the process from terminating.
-                cts.Cancel();
-            };
-
-            using (var consumer = new ConsumerBuilder<string, string>(consumerConfig).Build())
+            using (var producer = new ProducerBuilder<string, string>(config).Build())
             {
-                consumer.Subscribe(topic);
-                var susbcribe = consumer.Subscription;
-                Console.WriteLine($"This is a Name {consumer.Name}");
-                Console.WriteLine($"This is a suscriptor {susbcribe.Count}");
+                int numProduced = 0;
+                int numMessages = 999;
+                for (int i = 0; i < numMessages; ++i)
+                {
+                    var key = "messageKey" + i;
+                    var val = "messageVal" + i;
 
-                try
-                {
-                    var stop = new CancellationToken();
-                    while (true)
-                    {
-                        Console.WriteLine("This is a iteration on bucle");
-                        var cr = consumer.Consume(cts.Token);
-                        string key = cr.Message.Key == null ? "Null" : cr.Message.Key;
-                        Console.WriteLine($"Consumed record with key {key} and value {cr.Message.Value}");
-                        await Task.Delay(5000, stop);
-                        Console.WriteLine("5 Seconds of Delay");
-                    }
+                    Console.WriteLine($"Producing record: {key} {val}");
+
+                    /*var task = await producer.ProduceAsync(topic, new Message<string, string> { Key = key, Value = val });
+
+                    Console.WriteLine($"This topic value for Task in produce message {task.Topic}");*/
+
+                    producer.Produce(topic, new Message<string, string> { Key = key, Value = val },
+                        (deliveryReport) =>
+                        {
+                            Console.WriteLine(deliveryReport.Topic);
+                            Console.WriteLine(deliveryReport.Partition);
+                            if (deliveryReport.Error.Code != ErrorCode.NoError)
+                            {
+                                Console.WriteLine($"Failed to deliver message: {deliveryReport.Error.Reason}");
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Produced message to: {deliveryReport.TopicPartitionOffset}");
+                                numProduced += 1;
+                            }
+                        });
                 }
-                catch (OperationCanceledException)
-                {
-                    //exception might have occurred since Ctrl-C was pressed.
-                }
-                finally
-                {
-                    // Ensure the consumer leaves the group cleanly and final offsets are committed.
-                    consumer.Close();
-                }
+
+                producer.Flush(TimeSpan.FromSeconds(10));
+
+                Console.WriteLine($"{numProduced} messages were produced to topic {topic}");
             }
         }
     }
